@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+
+url=http://127.0.0.1:15277/
+systemctl --user start winship.service >/dev/null 2>&1 || true
+if command -v xdg-open >/dev/null 2>&1; then
+    exec xdg-open "$url"
+fi
+printf 'Open %s in a browser.\n' "$url"

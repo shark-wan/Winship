@@ -1,0 +1,15 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = remove ] && [ -f /etc/winship/service-user ]; then
+    service_user=$(cat /etc/winship/service-user 2>/dev/null || true)
+    service_uid=$(id -u "$service_user" 2>/dev/null || true)
+    if [ -n "$service_uid" ] && [ -S "/run/user/$service_uid/systemd/private" ]; then
+        runuser -u "$service_user" -- env XDG_RUNTIME_DIR="/run/user/$service_uid" \
+            systemctl --user stop winship.service >/dev/null 2>&1 || true
+        runuser -u "$service_user" -- env XDG_RUNTIME_DIR="/run/user/$service_uid" \
+            systemctl --user disable winship.service >/dev/null 2>&1 || true
+    fi
+fi
+
+exit 0

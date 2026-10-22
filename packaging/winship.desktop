@@ -1,10 +1,11 @@
 [Desktop Entry]
 Type=Application
 Name=Winship
+GenericName=Windows Virtual Machine Manager
 Comment=Manage a Windows VM with PCI passthrough
-Exec=winship
+Exec=winship-launch
 Icon=computer
 Terminal=false
-Categories=System;
+Categories=System;Utility;
+Keywords=virtual machine;libvirt;windows;vfio;qemu;
 StartupNotify=true
-

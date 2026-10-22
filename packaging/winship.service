@@ -1,0 +1,22 @@
+[Unit]
+Description=Winship local Windows VM web manager
+Documentation=file:///usr/share/doc/winship/README.md
+After=plasma-polkit-agent.service
+
+[Service]
+Type=simple
+UMask=0077
+WorkingDirectory=/var/lib/winship
+Environment=WINSHIP_CONFIG_FILE=/var/lib/winship/vm.json
+Environment=WINSHIP_LISTEN=0.0.0.0:15277
+Environment=RUST_BACKTRACE=1
+ExecStart=/usr/bin/winship
+Restart=on-failure
+RestartSec=3s
+# Do not add mount/namespace/seccomp sandboxing or NoNewPrivileges here.
+# Unprivileged user services that need those are put in a user namespace where
+# host root is unmapped, which makes pkexec's setuid helper fail. Winship's
+# privileged surface is restricted by the PolicyKit action and helper CLI.
+
+[Install]
+WantedBy=default.target

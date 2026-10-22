@@ -1,0 +1,69 @@
+#!/bin/sh
+set -e
+
+existing_user=$(cat /etc/winship/service-user 2>/dev/null || true)
+existing_uid=$(id -u "$existing_user" 2>/dev/null || printf '0')
+if [ -n "$existing_user" ] && { [ "$existing_user" = winship ] || [ "$existing_uid" -ge 1000 ]; }; then
+    service_user=$existing_user
+    service_uid=$existing_uid
+else
+    service_user=${SUDO_USER:-}
+    service_uid=$(id -u "$service_user" 2>/dev/null || printf '0')
+    if [ -z "$service_user" ] || [ "$service_uid" -lt 1000 ]; then
+        service_user=winship
+        service_uid=$(id -u winship 2>/dev/null || true)
+        if [ -z "$service_uid" ]; then
+            adduser --system --group --home /var/lib/winship --no-create-home \
+                --disabled-login --gecos "Winship service" winship >/dev/null
+            service_uid=$(id -u winship)
+        fi
+    fi
+fi
+service_group=$(id -gn "$service_user")
+
+for group in libvirt kvm; do
+    if getent group "$group" >/dev/null; then
+        adduser "$service_user" "$group" >/dev/null 2>&1 || true
+    fi
+done
+
+install -d -o "$service_user" -g "$service_group" -m 0750 /var/lib/winship
+install -d -o "$service_user" -g "$service_group" -m 0700 /etc/winship
+chown -R "$service_user:$service_group" /var/lib/winship /etc/winship
+printf '%s\n' "$service_user" > /etc/winship/service-user
+chmod 0644 /etc/winship/service-user
+
+# Migrate installations that used the earlier system-level service.
+if [ -d /run/systemd/system ]; then
+    systemctl stop winship.service >/dev/null 2>&1 || true
+    systemctl disable winship.service >/dev/null 2>&1 || true
+    if [ -f /etc/systemd/system/winship.service.d/10-service-user.conf ]; then
+        rm -f /etc/systemd/system/winship.service.d/10-service-user.conf
+        rmdir /etc/systemd/system/winship.service.d >/dev/null 2>&1 || true
+    fi
+    systemctl daemon-reload >/dev/null 2>&1 || true
+fi
+
+runtime=/run/user/$service_uid
+if [ -d /run/systemd/system ]; then
+    loginctl enable-linger "$service_user" >/dev/null 2>&1 || true
+    for _attempt in 1 2 3 4 5 6 7 8 9 10; do
+        [ -S "$runtime/systemd/private" ] && break
+        sleep 0.5
+    done
+    if [ -S "$runtime/systemd/private" ]; then
+        runuser -u "$service_user" -- env XDG_RUNTIME_DIR="$runtime" \
+            systemctl --user daemon-reload >/dev/null 2>&1 || true
+        runuser -u "$service_user" -- env XDG_RUNTIME_DIR="$runtime" \
+            systemctl --user enable winship.service >/dev/null 2>&1 || true
+        runuser -u "$service_user" -- env XDG_RUNTIME_DIR="$runtime" \
+            systemctl --user restart winship.service >/dev/null 2>&1 || true
+    fi
+fi
+
+printf '\nWinship service user: %s\n' "$service_user"
+printf 'Winship token: sudo cat /etc/winship/token\n'
+printf 'Web interface: http://127.0.0.1:15277/\n'
+printf 'Service status: systemctl --user status winship.service\n\n'
+
+exit 0
