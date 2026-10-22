@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Winship
+Comment=Manage a Windows VM with PCI passthrough
+Exec=winship
+Icon=computer
+Terminal=false
+Categories=System;
+StartupNotify=true
+

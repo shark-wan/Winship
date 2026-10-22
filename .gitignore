@@ -1,0 +1,7 @@
+/target/
+/dist/
+*.iso
+AGENTS.md
+*.swp
+*.tmp
+

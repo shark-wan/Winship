@@ -1,0 +1,12 @@
+Package: winship
+Version: 0.1.0
+Section: admin
+Priority: optional
+Maintainer: Shark Wan <178453051+shark-wan@users.noreply.github.com>
+Architecture: amd64
+Depends: libc6, libgl1, libx11-6, libwayland-client0, libwayland-cursor0, libxkbcommon0, fonts-noto-cjk, qemu-system-x86, qemu-utils, libvirt-daemon-system, libvirt-clients, ovmf, pkexec, polkitd, xdg-desktop-portal, initramfs-tools
+Description: Native manager for one Windows VM with PCI passthrough
+ Winship manages a single local Windows virtual machine on Debian using
+ QEMU, libvirt, OVMF, VFIO, and VirtIO Balloon. It includes a PolicyKit
+ helper for applying VFIO host configuration.
+
