@@ -22,9 +22,12 @@ pub fn token_file_path() -> PathBuf {
 }
 
 pub fn load_or_create_token() -> io::Result<String> {
-    let path = token_file_path();
+    load_or_create_token_at(&token_file_path())
+}
+
+fn load_or_create_token_at(path: &Path) -> io::Result<String> {
     if path.exists() {
-        return read_token(&path);
+        return read_token(path);
     }
     let parent = path.parent().unwrap_or_else(|| Path::new("/etc/winship"));
     DirBuilder::new()
@@ -44,16 +47,16 @@ pub fn load_or_create_token() -> io::Result<String> {
         .write(true)
         .create_new(true)
         .mode(0o600)
-        .open(&path)
+        .open(path)
     {
         Ok(mut file) => {
             file.write_all(token.as_bytes())?;
             file.write_all(b"\n")?;
             file.sync_all()?;
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
             Ok(token)
         }
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => read_token(&path),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => read_token(path),
         Err(error) => Err(error),
     }
 }
@@ -155,6 +158,21 @@ mod tests {
         assert!(token_matches("0123456789abcdef", "0123456789abcdef"));
         assert!(!token_matches("0123456789abcdef", "0123456789abcdee"));
         assert!(!token_matches("short", "a-much-longer-value"));
+    }
+
+    #[test]
+    fn creates_token_once_with_private_permissions() {
+        let root = std::env::temp_dir().join(format!("winship-token-{}", std::process::id()));
+        let path = root.join("token");
+        let first = load_or_create_token_at(&path).unwrap();
+        let second = load_or_create_token_at(&path).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 64);
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

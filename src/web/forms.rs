@@ -257,6 +257,25 @@ mod tests {
     }
 
     #[test]
+    fn rejects_wireless_bridge_selection() {
+        let host = HostSnapshot {
+            network_interfaces: vec![crate::model::NetworkInterface {
+                name: "wlan0".into(),
+                kind: "wireless".into(),
+                state: "up".into(),
+                addresses: vec![],
+            }],
+            ..HostSnapshot::default()
+        };
+        let form = FormData::parse(
+            b"windows_iso=%2Ftmp%2Fwindows.iso&virtio_iso=%2Ftmp%2Fvirtio.iso&disk_path=%2Fvar%2Flib%2Flibvirt%2Fimages%2Ftest.qcow2&disk_size_gib=80&cpu_cores=4&startup_memory_mib=4096&maximum_memory_mib=12288&network_mode=bridge&network_interface=wlan0",
+        )
+        .unwrap();
+        let error = parse_config(&form, &host, &VmConfig::default()).unwrap_err();
+        assert!(error.contains("有线"));
+    }
+
+    #[test]
     fn encodes_notice_for_redirects() {
         assert_eq!(
             url_encode("失败 / 检查"),

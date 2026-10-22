@@ -410,13 +410,7 @@ fn apply_vfio_blocking() -> Result<String, String> {
     host.validate_pci_passthrough(&config)
         .map_err(|error| error.to_string())?;
     crate::privileged::request_vfio_apply(&ids)
-        .map(|output| {
-            if output.is_empty() {
-                "VFIO 配置已写入，initramfs 已更新。请重启主机使绑定生效。".into()
-            } else {
-                output
-            }
-        })
+        .map(|_| "VFIO 配置已写入，initramfs 已更新。请重启主机使绑定生效。".to_string())
         .map_err(|error| error.to_string())
 }
 

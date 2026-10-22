@@ -9,6 +9,12 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use thiserror::Error;
 
+fn virsh_command() -> Command {
+    let mut command = Command::new("virsh");
+    command.env("LC_ALL", "C");
+    command
+}
+
 #[derive(Debug, Error)]
 pub enum LibvirtError {
     #[error(transparent)]
@@ -279,7 +285,7 @@ fn validate_usb_selection(selection: &UsbSelection) -> Result<(), ConfigError> {
 }
 
 pub fn domain_status() -> Result<VmStatus, LibvirtError> {
-    let output = Command::new("virsh")
+    let output = virsh_command()
         .args(["--connect", LIBVIRT_URI, "dominfo", VM_NAME])
         .output()?;
     if !output.status.success() {
@@ -293,8 +299,13 @@ pub fn domain_status() -> Result<VmStatus, LibvirtError> {
         return Err(LibvirtError::Command(error));
     }
     let mut status = parse_dominfo(&String::from_utf8_lossy(&output.stdout));
+    if matches!(status.state, PowerState::NotDefined) {
+        return Err(LibvirtError::Command(
+            "virsh dominfo returned output that Winship could not parse".into(),
+        ));
+    }
     if status.state.is_active() {
-        if let Ok(stats) = Command::new("virsh")
+        if let Ok(stats) = virsh_command()
             .args([
                 "--connect",
                 LIBVIRT_URI,
@@ -355,7 +366,7 @@ pub fn run_control(action: &str) -> Result<String, LibvirtError> {
     if !matches!(action, "start" | "shutdown" | "destroy") {
         return Err(LibvirtError::Command("Unsupported VM operation".into()));
     }
-    let output = Command::new("virsh")
+    let output = virsh_command()
         .args(["--connect", LIBVIRT_URI, action, VM_NAME])
         .output()?;
     if !output.status.success() {
@@ -428,7 +439,7 @@ pub fn validate_vfio_binding(config: &VmConfig) -> Result<(), LibvirtError> {
 }
 
 pub fn domain_uuid() -> Result<Option<String>, LibvirtError> {
-    let output = Command::new("virsh")
+    let output = virsh_command()
         .args(["--connect", LIBVIRT_URI, "domuuid", VM_NAME])
         .output()?;
     if !output.status.success() {
@@ -516,7 +527,7 @@ pub fn block_device_is_mounted(path: &str) -> Result<bool, LibvirtError> {
 }
 
 pub fn undefine_domain() -> Result<(), LibvirtError> {
-    let output = Command::new("virsh")
+    let output = virsh_command()
         .args(["--connect", LIBVIRT_URI, "undefine", "--nvram", VM_NAME])
         .output()?;
     if !output.status.success() {
@@ -528,7 +539,7 @@ pub fn undefine_domain() -> Result<(), LibvirtError> {
 }
 
 pub fn define_domain(xml: &str) -> Result<(), LibvirtError> {
-    let mut child = Command::new("virsh")
+    let mut child = virsh_command()
         .args(["--connect", LIBVIRT_URI, "define", "/dev/stdin"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
