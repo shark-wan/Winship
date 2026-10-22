@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}概览 · Winship{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="eyebrow">CONTROL CENTER</p>
+    <h1>概览</h1>
+    <p class="page-subtitle">Windows 虚拟机状态、资源占用与直通就绪检查</p>
+  </div>
+  <div class="page-actions">
+    <a class="button button-quiet" href="/vm">编辑配置</a>
+    {% if !vm.defined %}
+      <a class="button button-primary" href="/vm">配置虚拟机</a>
+    {% else if vm.active %}
+      <form method="post" action="/vm/action/shutdown" data-busy>
+        <button class="button button-primary" type="submit">正常关机</button>
+      </form>
+    {% else %}
+      <form method="post" action="/vm/action/start" data-busy>
+        <button class="button button-primary" type="submit">启动 Windows</button>
+      </form>
+    {% endif %}
+  </div>
+</div>
+
+{% if vm.has_error %}
+<div class="inline-error" role="alert">
+  <strong>libvirt 连接异常</strong>
+  <span>{{ vm.error }}</span>
+</div>
+{% endif %}
+
+<section class="hero">
+  <div class="hero-main">
+    <p class="hero-kicker">WINDOWS VIRTUAL MACHINE</p>
+    <div class="hero-status">
+      <span class="status-dot {{ vm.state_class }}" data-live-state-dot></span>
+      <span class="hero-state" data-live="vm-label">{{ vm.label }}</span>
+      <span class="pill pill-light" data-live="vm-pill">{% if vm.active %}运行中{% else if vm.defined %}已就绪{% else %}未配置{% endif %}</span>
+    </div>
+    <p class="hero-copy">NVIDIA 整卡直通 · 物理显示输出 · VirtIO Balloon · Q35 / OVMF</p>
+    <div class="hero-actions">
+      {% if vm.active %}
+      <form method="post" action="/vm/action/shutdown" data-busy>
+        <button class="button button-white" type="submit">正常关机</button>
+      </form>
+      <form method="post" action="/vm/action/force-stop" data-busy data-confirm="强制停止相当于直接断电，可能造成 Windows 文件系统损坏。仅在正常关机无效时使用。">
+        <button class="button button-ghost-light" type="submit">强制停止</button>
+      </form>
+      {% else if vm.defined %}
+      <form method="post" action="/vm/action/start" data-busy>
+        <button class="button button-white" type="submit">启动 Windows</button>
+      </form>
+      <a class="button button-ghost-light" href="/vm">打开配置</a>
+      {% else %}
+      <a class="button button-white" href="/vm">开始配置</a>
+      {% endif %}
+    </div>
+  </div>
+  <div class="hero-memory">
+    <p>启动内存 / 上限</p>
+    <strong>{{ config.startup_memory_mib }} <span>MiB</span></strong>
+    <small>上限 {{ config.maximum_memory_mib }} MiB · Balloon 可回收闲置内存</small>
+    <div class="memory-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+  </div>
+</section>
+
+<div class="metric-grid">
+  <article class="metric-card">
+    <div class="metric-top"><span>CPU 使用</span><span class="metric-glyph">CPU</span></div>
+    <strong data-live="cpu-percent">{{ cpu_percent }}</strong>
+    <small>{{ vm.cpu_count }} 个 vCPU · host-passthrough</small>
+    <div class="meter"><i data-live-meter="cpu"></i></div>
+  </article>
+  <article class="metric-card">
+    <div class="metric-top"><span>虚拟机内存</span><span class="metric-glyph blue">RAM</span></div>
+    <strong data-live="vm-memory">{{ vm.memory_current }}</strong>
+    <small>上限 <span data-live="vm-memory-max">{{ vm.memory_max }}</span></small>
+    <div class="meter blue"><i></i></div>
+  </article>
+  <article class="metric-card">
+    <div class="metric-top"><span>宿主机内存</span><span class="metric-glyph amber">HOST</span></div>
+    <strong>{{ host_memory_used }}</strong>
+    <small>可用 {{ host.memory_available_mib }} MiB / {{ host.memory_total_mib }} MiB</small>
+    <div class="meter amber"><i data-meter-value="{{ host_memory_used }}"></i></div>
+  </article>
+  <article class="metric-card">
+    <div class="metric-top"><span>虚拟磁盘</span><span class="metric-glyph violet">DSK</span></div>
+    <strong>{{ config.disk_size_gib }} <span class="unit">GiB</span></strong>
+    <small class="truncate" title="{{ disk_status }}">{{ disk_status }}</small>
+    <div class="meter violet"><i></i></div>
+  </article>
+</div>
+
+<div class="dashboard-grid">
+  <section class="card">
+    <div class="card-head">
+      <div><h2>就绪检查</h2><p>按顺序完成这些检查，Windows 才能稳定直通显卡输出。</p></div>
+      <span class="count-badge">{{ readiness.len() }} 项</span>
+    </div>
+    <ul class="readiness-list">
+      {% for item in readiness %}
+      <li class="readiness-item">
+        <span class="readiness-mark {{ item.level }}" aria-hidden="true">{% if item.level == "ok" %}✓{% else if item.level == "error" %}!{% else if item.level == "warn" %}•{% else %}i{% endif %}</span>
+        <div><strong>{{ item.title }}</strong><p>{{ item.detail }}</p></div>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <div class="stack">
+    <section class="card">
+      <div class="card-head"><div><h2>直通概览</h2><p>Windows 独占这些设备</p></div></div>
+      <div class="pass-grid">
+        <div class="pass-item">
+          <span class="pass-icon">GPU</span>
+          <div><strong>NVIDIA 显卡</strong><p>{{ selected_gpu }}</p></div>
+          <span class="status-chip {% if vfio.ready %}ok{% else %}warn{% endif %}">{% if vfio.ready %}已绑定{% else %}待配置{% endif %}</span>
+        </div>
+        <div class="pass-item">
+          <span class="pass-icon blue">USB</span>
+          <div><strong>USB 直通</strong><p>{{ selected_usb_controllers }} 个控制器 · {{ selected_usb_devices }} 个单设备</p></div>
+        </div>
+        <div class="pass-item">
+          <span class="pass-icon amber">DISK</span>
+          <div><strong>物理磁盘</strong><p>{{ selected_disks }} 块整盘直通</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card card-warm">
+      <div class="card-head"><div><h2>下一步</h2><p>Proxmox 式操作顺序</p></div></div>
+      <ol class="step-list">
+        <li><span>01</span><p>完成 IOMMU、Secure Boot 与 OVMF 检查</p></li>
+        <li><span>02</span><p>选择显卡、USB 控制器与物理磁盘</p></li>
+        <li><span>03</span><p>应用 VFIO 配置并重启主机</p></li>
+        <li><span>04</span><p>创建磁盘、定义并启动 Windows</p></li>
+        <li><span>05</span><p>在 Windows 中安装 VirtIO Balloon 驱动</p></li>
+      </ol>
+    </section>
+  </div>
+</div>
+
+<section class="card host-strip">
+  <div><span class="label">宿主机</span><strong>{{ host.hostname }}</strong></div>
+  <div><span class="label">系统</span><strong>{{ host.debian_release }}</strong></div>
+  <div><span class="label">内核</span><strong>{{ host.kernel_release }}</strong></div>
+  <div><span class="label">CPU</span><strong class="truncate">{{ host.cpu_model }}</strong></div>
+  <div><span class="label">VFIO ID</span><strong>{% for id in vfio.selected_ids %}<code>{{ id }}</code> {% endfor %}{% if vfio.selected_ids.len() == 0 %}未选择{% endif %}</strong></div>
+</section>
+{% endblock %}

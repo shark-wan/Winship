@@ -20,7 +20,30 @@ pub fn inspect_host() -> HostSnapshot {
         .map(|name| name.trim_matches('"').to_string())
         .unwrap_or_else(|| "Debian host".to_string());
 
+    let (memory_total_mib, memory_available_mib) = read_memory_info();
+    let cpu_model = fs::read_to_string("/proc/cpuinfo")
+        .unwrap_or_default()
+        .lines()
+        .find_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            (key.trim() == "model name").then(|| value.trim().to_string())
+        })
+        .unwrap_or_else(|| "Unknown CPU".into());
+    let hostname = fs::read_to_string("/proc/sys/kernel/hostname")
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let kernel_release = fs::read_to_string("/proc/sys/kernel/osrelease")
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
     HostSnapshot {
+        kernel_release,
+        hostname,
+        cpu_model,
+        memory_total_mib,
+        memory_available_mib,
         iommu_cmdline_enabled: iommu_flag_enabled(&kernel_cmdline),
         kernel_cmdline,
         secure_boot_enabled: detect_secure_boot(Path::new("/sys/firmware/efi/efivars")),
@@ -32,6 +55,30 @@ pub fn inspect_host() -> HostSnapshot {
         firmware: discover_firmware(Path::new("/usr/share/OVMF")),
         debian_release,
     }
+}
+
+fn read_memory_info() -> (u64, u64) {
+    let contents = fs::read_to_string("/proc/meminfo").unwrap_or_default();
+    let mut total = 0;
+    let mut available = 0;
+    for line in contents.lines() {
+        if let Some(value) = line.strip_prefix("MemTotal:") {
+            total = value
+                .split_whitespace()
+                .next()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or_default()
+                / 1024;
+        } else if let Some(value) = line.strip_prefix("MemAvailable:") {
+            available = value
+                .split_whitespace()
+                .next()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or_default()
+                / 1024;
+        }
+    }
+    (total, available)
 }
 
 pub fn detect_secure_boot(root: &Path) -> Option<bool> {

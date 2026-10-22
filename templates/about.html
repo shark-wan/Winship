@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}关于与安全 · Winship{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="eyebrow">ABOUT &amp; SAFETY</p>
+    <h1>关于与安全</h1>
+    <p class="page-subtitle">范围、恢复路径与运行环境</p>
+  </div>
+  <span class="pill">v{{ chrome.version }}</span>
+</div>
+
+<div class="two-column">
+  <section class="card">
+    <div class="card-head"><div><h2>Winship 是什么</h2><p>单机、单虚拟机的本地控制面</p></div></div>
+    <p>Winship 管理本机的一台 Windows 虚拟机。它固定使用 Q35、OVMF/UEFI、VirtIO Balloon，并允许把 NVIDIA 显卡、USB 控制器、单个 USB 设备或整块物理移动磁盘交给 Windows。</p>
+    <p>Windows 画面直接从直通显卡的物理输出口输出。本项目不提供 RemoteApp、FreeRDP 窗口合成、Looking Glass 或远程显示。</p>
+    <div class="feature-list">
+      <span>axum + askama</span><span>qemu:///system</span><span>PolicyKit 特权助手</span><span>Token 认证</span>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><div><h2>运行环境</h2><p>当前宿主机</p></div></div>
+    <dl class="detail-list">
+      <div><dt>主机</dt><dd>{{ host.hostname }}</dd></div>
+      <div><dt>系统</dt><dd>{{ host.debian_release }}</dd></div>
+      <div><dt>内核</dt><dd><code>{{ host.kernel_release }}</code></dd></div>
+      <div><dt>虚拟机</dt><dd>{{ vm.label }}</dd></div>
+      <div><dt>监听</dt><dd><code>0.0.0.0:15277</code></dd></div>
+    </dl>
+  </section>
+</div>
+
+<section class="card card-warning">
+  <div class="card-head"><div><h2>PCI 直通风险</h2><p>错误的设备或 IOMMU 分组可能让宿主机失去显示或输入设备</p></div></div>
+  <ul class="bullet-list">
+    <li>应用 VFIO 配置前，逐项核对 PCI BDF 地址与 IOMMU 分组。</li>
+    <li>不要把 Debian 正在使用的核显、NVMe 控制器或键盘鼠标所在 USB 控制器直通给 Windows。</li>
+    <li>VFIO 绑定在重启后生效；Winship 不会自动重启宿主机。</li>
+    <li>务必保留恢复手段，包括另一台设备、SSH 或 Live USB。</li>
+  </ul>
+</section>
+
+<div class="two-column">
+  <section class="card">
+    <div class="card-head"><div><h2>认证与访问</h2><p>本地服务也需要访问控制</p></div></div>
+    <p>Winship 默认监听 <code>0.0.0.0:15277</code>。所有页面与 API 都需要 <code>/etc/winship/token</code> 中的 token，登录后写入 HttpOnly、SameSite=Strict Cookie。</p>
+    <p>请在受信任的本机浏览器使用。若不需要局域网访问，建议通过防火墙限制 15277 端口，或设置 <code>WINSHIP_LISTEN=127.0.0.1:15277</code>。</p>
+  </section>
+  <section class="card">
+    <div class="card-head"><div><h2>磁盘与关机</h2><p>数据安全提示</p></div></div>
+    <ul class="bullet-list">
+      <li>物理整盘直通后，该磁盘在宿主机侧不可见，不能同时挂载。</li>
+      <li>强制停止相当于断电，仅在正常关机无效时使用。</li>
+      <li>删除虚拟机定义不会删除 qcow2、ISO 或物理磁盘数据。</li>
+      <li>Windows 内安装 VirtIO Balloon 驱动后，宿主机才能回收闲置内存。</li>
+    </ul>
+  </section>
+</div>
+
+<section class="card">
+  <div class="card-head"><div><h2>明确不包含</h2><p>保持第一版范围收敛</p></div></div>
+  <div class="scope-grid">
+    <span>集群 / HA</span><span>Ceph / ZFS 池</span><span>LXC</span><span>备份服务器</span><span>SDN / 防火墙</span><span>Docker / Podman</span><span>RemoteApp</span><span>FreeRDP</span><span>Looking Glass</span><span>跨平台</span>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>{% block title %}Winship{% endblock %}</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="/" aria-label="Winship 概览">
+        <span class="brand-mark" aria-hidden="true">W</span>
+        <span class="brand-copy">
+          <strong>Winship</strong>
+          <small>Windows workstation</small>
+        </span>
+      </a>
+
+      <p class="nav-caption">管理</p>
+      <nav class="nav-list" aria-label="主导航">
+        <a class="nav-item{% if chrome.active == "overview" %} is-active{% endif %}" href="/">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zm10 0h6v6h-6zM4 14h6v6H4zm10 0h6v6h-6z"/></svg>
+          <span>概览</span>
+        </a>
+        <a class="nav-item{% if chrome.active == "host" %} is-active{% endif %}" href="/host">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v5H4zm0 9h16v5H4z"/><path class="stroke" d="M7 7.5h.01M7 16.5h.01"/></svg>
+          <span>硬件与直通</span>
+        </a>
+        <a class="nav-item{% if chrome.active == "vm" %} is-active{% endif %}" href="/vm">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18v12H3zm6 16h6m-3-4v4"/></svg>
+          <span>虚拟机</span>
+        </a>
+        <a class="nav-item{% if chrome.active == "about" %} is-active{% endif %}" href="/about">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zm0 4.5v.01M12 11v6"/></svg>
+          <span>关于与安全</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-note">
+        <span class="pulse" aria-hidden="true"></span>
+        <div>
+          <strong>本地控制面</strong>
+          <small>NVIDIA 物理输出 · VirtIO Balloon</small>
+        </div>
+      </div>
+
+      <div class="sidebar-footer">
+        <span>Winship v{{ chrome.version }}</span>
+        <form method="post" action="/logout">
+          <button class="text-button" type="submit">退出登录</button>
+        </form>
+      </div>
+    </aside>
+
+    <div class="workspace">
+      <header class="workspace-bar">
+        <div class="workspace-context">
+          <span class="context-dot" aria-hidden="true"></span>
+          <span>Debian 宿主机</span>
+          <span class="divider" aria-hidden="true"></span>
+          <span>127.0.0.1:15277</span>
+        </div>
+        <button class="button button-quiet button-small" type="button" data-reload>刷新页面</button>
+      </header>
+
+      {% if chrome.notice_visible %}
+      <div class="flash{% if chrome.notice_error %} flash-error{% else %} flash-success{% endif %}" role="status" data-flash>
+        <span class="flash-mark" aria-hidden="true">{% if chrome.notice_error %}!{% else %}✓{% endif %}</span>
+        <span>{{ chrome.notice_message }}</span>
+        <button class="flash-close" type="button" data-dismiss-flash aria-label="关闭提示">×</button>
+      </div>
+      {% endif %}
+
+      <main class="content">
+        {% block content %}{% endblock %}
+      </main>
+
+      <footer class="footer">
+        <span>Winship 仅管理本机的一台 Windows 虚拟机。</span>
+        <span>直通设备在虚拟机运行期间由 Windows 独占。</span>
+      </footer>
+    </div>
+  </div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

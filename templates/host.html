@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+{% block title %}硬件与直通 · Winship{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="eyebrow">HOST &amp; PASSTHROUGH</p>
+    <h1>硬件与直通</h1>
+    <p class="page-subtitle">IOMMU、PCI 分组、VFIO 绑定与宿主机设备</p>
+  </div>
+  <div class="page-actions">
+    <a class="button button-quiet" href="/vm">选择直通设备</a>
+    <form method="post" action="/host/apply-vfio" data-busy data-confirm="这会写入 /etc/modprobe.d/vfio.conf 并运行 update-initramfs -u -k all。应用后必须重启主机才能完成设备绑定。继续吗？">
+      <button class="button button-primary" type="submit" {% if vfio.selected_ids.len() == 0 %}disabled{% endif %}>应用 VFIO 配置</button>
+    </form>
+  </div>
+</div>
+
+{% if vm.active %}
+<div class="inline-warning" role="alert">
+  <strong>虚拟机正在运行</strong>
+  <span>修改 VFIO 绑定前，请先在 Windows 中正常关机。</span>
+</div>
+{% endif %}
+
+<div class="stat-grid">
+  <article class="stat-card">
+    <span>IOMMU</span>
+    <strong class="{% if iommu_ready %}text-ok{% else %}text-error{% endif %}">{% if iommu_ready %}已启用{% else %}未启用{% endif %}</strong>
+    <small>{{ iommu_groups }} 个分组</small>
+  </article>
+  <article class="stat-card">
+    <span>Secure Boot</span>
+    <strong class="text-{{ secure_boot_class }}">{{ secure_boot }}</strong>
+    <small>NVIDIA 直通要求关闭</small>
+  </article>
+  <article class="stat-card">
+    <span>OVMF</span>
+    <strong class="{% if firmware_ready %}text-ok{% else %}text-error{% endif %}">{% if firmware_ready %}已就绪{% else %}缺失{% endif %}</strong>
+    <small>Q35 + UEFI</small>
+  </article>
+  <article class="stat-card">
+    <span>宿主机内存</span>
+    <strong>{{ memory_used }}</strong>
+    <small>{{ host.memory_available_mib }} MiB 可用 / {{ host.memory_total_mib }} MiB</small>
+  </article>
+</div>
+
+<div class="two-column">
+  <section class="card">
+    <div class="card-head"><div><h2>VFIO 绑定状态</h2><p>总线级绑定在下次主机启动时生效</p></div>
+      <span class="status-chip {% if vfio.ready %}ok{% else if vfio.reboot_required %}warn{% else %}off{% endif %}">
+        {% if vfio.ready %}已绑定{% else if vfio.reboot_required %}等待重启{% else if vfio.all_applied %}等待重启{% else %}待应用{% endif %}
+      </span>
+    </div>
+    <dl class="detail-list">
+      <div><dt>已选择 ID</dt><dd>{% for id in vfio.selected_ids %}<code>{{ id }}</code> {% endfor %}{% if vfio.selected_ids.len() == 0 %}<span class="muted">尚未选择 PCI 设备</span>{% endif %}</dd></div>
+      <div><dt>已写入配置</dt><dd>{% for id in vfio.applied_ids %}<code>{{ id }}</code> {% endfor %}{% if vfio.applied_ids.len() == 0 %}<span class="muted">/etc/modprobe.d/vfio.conf 中无 Winship ID</span>{% endif %}</dd></div>
+    </dl>
+    {% if vfio.conflicts.len() > 0 %}
+    <div class="inline-error compact">
+      <strong>vendor:device ID 冲突</strong>
+      <span>这些未选设备也会被 vfio-pci 接管：{% for address in vfio.conflicts %}<code>{{ address }}</code> {% endfor %}</span>
+    </div>
+    {% endif %}
+    {% if vfio.reboot_required %}
+    <div class="inline-warning compact"><strong>需要重启主机</strong><span>VFIO 配置已写入，但设备仍由原驱动占用。Winship 不会自动重启宿主机。</span></div>
+    {% else if vfio.ready %}
+    <div class="inline-success compact"><strong>直通设备已就绪</strong><span>所有选中的 PCI 设备均由 vfio-pci 接管。</span></div>
+    {% endif %}
+    <p class="help-text">应用操作通过 PolicyKit 执行，写入 <code>/etc/modprobe.d/vfio.conf</code> 和 <code>/etc/initramfs-tools/modules</code>，并运行 <code>update-initramfs -u -k all</code>。</p>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><div><h2>运行环境</h2><p>宿主机与固件</p></div></div>
+    <dl class="detail-list">
+      <div><dt>主机名</dt><dd>{{ host.hostname }}</dd></div>
+      <div><dt>系统</dt><dd>{{ host.debian_release }}</dd></div>
+      <div><dt>内核</dt><dd><code>{{ host.kernel_release }}</code></dd></div>
+      <div><dt>CPU</dt><dd>{{ host.cpu_model }}</dd></div>
+      <div><dt>OVMF CODE</dt><dd><code>{{ ovmf_code }}</code></dd></div>
+      <div><dt>OVMF VARS</dt><dd><code>{{ ovmf_vars }}</code></dd></div>
+      <div><dt>Balloon</dt><dd>{{ balloon_current }} / {{ balloon_max }}</dd></div>
+    </dl>
+  </section>
+</div>
+
+<section class="card">
+  <div class="card-head"><div><h2>PCI 设备与 IOMMU 分组</h2><p>同一 IOMMU group 的所有设备必须一起直通；在“虚拟机”页面选择。</p></div></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>地址</th><th>设备</th><th>IOMMU 分组</th><th>驱动</th><th>直通状态</th></tr></thead>
+      <tbody>
+      {% for row in pci_rows %}
+      <tr class="{% if row.selected %}row-selected{% endif %}">
+        <td><code>{{ row.address }}</code></td>
+        <td>
+          <div class="cell-title">{{ row.description }}
+            {% if row.is_nvidia %}<span class="tag tag-green">NVIDIA</span>{% endif %}
+            {% if row.is_usb_controller %}<span class="tag tag-blue">USB</span>{% endif %}
+            {% if row.is_audio %}<span class="tag">Audio</span>{% endif %}
+          </div>
+          <small>{{ row.vendor_id }}:{{ row.device_id }} · class {{ row.class_label }}</small>
+        </td>
+        <td>
+          <div>{{ row.group_label }}</div>
+          <small class="group-members">{{ row.group_members }}</small>
+          {% if row.selected && !row.group_complete %}<span class="tag tag-red">分组不完整</span>{% endif %}
+        </td>
+        <td><code>{{ row.driver }}</code>{% if row.vfio_ready %}<span class="tag tag-green">vfio-pci</span>{% endif %}</td>
+        <td>
+          {% if row.selected %}
+            <span class="status-chip ok">已选择</span>
+          {% else if row.recommended %}
+            <span class="status-chip off">推荐</span>
+          {% else %}
+            <span class="status-chip off">未选</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<div class="two-column">
+  <section class="card">
+    <div class="card-head"><div><h2>USB 设备</h2><p>单设备直通，热插拔由 QEMU 管理</p></div></div>
+    {% if usb_rows.len() == 0 %}
+      <p class="empty-state">未发现 USB 设备。</p>
+    {% else %}
+    <ul class="simple-list">
+      {% for row in usb_rows %}
+      <li><div><strong>{{ row.name }}</strong><small>{{ row.vendor_id }}:{{ row.product_id }} · {{ row.address }}</small></div><span class="status-chip {% if row.selected %}ok{% else %}off{% endif %}">{% if row.selected %}已选择{% else %}未选{% endif %}</span></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-head"><div><h2>物理移动磁盘</h2><p>整盘 block 直通</p></div></div>
+    {% if disk_rows.len() == 0 %}
+      <p class="empty-state">未发现 USB 或可移动磁盘。</p>
+    {% else %}
+    <ul class="simple-list">
+      {% for row in disk_rows %}
+      <li>
+        <div><strong>{{ row.model }}</strong><small>{{ row.path }} · {{ row.size }} · {{ row.transport }}</small>
+          {% if row.mounted %}<span class="tag tag-amber">已挂载：{{ row.mountpoint }}</span>{% endif %}
+        </div>
+        <span class="status-chip {% if row.selected %}ok{% else %}off{% endif %}">{% if row.selected %}已选择{% else %}未选{% endif %}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </section>
+</div>
+
+<section class="card">
+  <div class="card-head"><div><h2>网络接口</h2><p>NAT 为默认；桥接仅限有线；macvtap 为实验性</p></div></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>接口</th><th>类型</th><th>状态</th><th>地址</th></tr></thead>
+      <tbody>
+      {% for row in network_rows %}
+      <tr><td><strong>{{ row.name }}</strong></td><td>{% if row.wired %}有线{% else %}{{ row.kind }}{% endif %}</td><td>{{ row.state }}</td><td><code>{{ row.addresses }}</code></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% if !iommu_ready %}
+<section class="card card-warning">
+  <div class="card-head"><div><h2>IOMMU 未启用</h2><p>需要在 GRUB 内核命令行启用</p></div></div>
+  <p>请在 <code>/etc/default/grub</code> 的 <code>GRUB_CMDLINE_LINUX_DEFAULT</code> 中加入：</p>
+  <pre><code>{{ iommu_hint }}</code></pre>
+  <p>然后运行 <code>sudo update-grub</code> 并重启。当前命令行：</p>
+  <pre><code>{{ host.kernel_cmdline }}</code></pre>
+</section>
+{% endif %}
+{% endblock %}

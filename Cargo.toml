@@ -3,20 +3,18 @@ name = "winship"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-description = "Native Debian desktop manager for a Windows libvirt VM with PCI passthrough"
+description = "Local web manager for one Windows libvirt VM with PCI passthrough"
 license = "GPL-3.0-or-later"
 
 [dependencies]
-cxx = "1.0"
-cxx-qt = "0.10"
-cxx-qt-lib = { version = "0.10", features = ["qt_full"] }
+askama = "=0.14.0"
+axum = { version = "=0.8.9", features = ["form"] }
+rand = "=0.9.5"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
-
-[build-dependencies]
-cxx-qt-build = { version = "0.10", features = ["link_qt_object_files"] }
-qt-build-utils = "0.10"
+tokio = { version = "=1.54.1", features = ["macros", "net", "rt-multi-thread", "signal", "sync"] }
+tower-http = { version = "=0.6.6", features = ["compression-gzip"] }
 
 [dev-dependencies]
 roxmltree = "0.20"

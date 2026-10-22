@@ -187,16 +187,21 @@ pub fn generate_domain_xml(
 
 fn network_interface_xml(config: &VmConfig) -> Result<String, ConfigError> {
     use crate::model::NetworkMode;
+    let mac = stable_guest_mac(&config.vm_uuid)
+        .map(|mac| format!("<mac address='{mac}'/>"))
+        .unwrap_or_default();
     let interface = match config.network_mode {
         NetworkMode::Nat => {
-            "    <interface type='network'><source network='default'/><model type='virtio'/></interface>\n".to_string()
+            format!(
+                "    <interface type='network'><source network='default'/>{mac}<model type='virtio'/></interface>\n"
+            )
         }
         NetworkMode::Macvtap => {
             if config.network_interface.trim().is_empty() {
                 return Err(ConfigError::MissingNetworkInterface);
             }
             format!(
-                "    <interface type='direct'><source dev='{}' mode='bridge'/><model type='virtio'/></interface>\n",
+                "    <interface type='direct'><source dev='{}' mode='bridge'/>{mac}<model type='virtio'/></interface>\n",
                 xml_escape(&config.network_interface)
             )
         }
@@ -205,12 +210,28 @@ fn network_interface_xml(config: &VmConfig) -> Result<String, ConfigError> {
                 return Err(ConfigError::MissingNetworkInterface);
             }
             format!(
-                "    <interface type='bridge'><source bridge='{}'/><model type='virtio'/></interface>\n",
+                "    <interface type='bridge'><source bridge='{}'/>{mac}<model type='virtio'/></interface>\n",
                 xml_escape(&config.network_interface)
             )
         }
     };
     Ok(interface)
+}
+
+pub fn stable_guest_mac(uuid: &str) -> Option<String> {
+    if !crate::model::is_uuid(uuid) {
+        return None;
+    }
+    let mut hash = 0x811c_9dc5u32;
+    for byte in uuid.bytes() {
+        hash ^= u32::from(byte);
+        hash = hash.wrapping_mul(16_777_619);
+    }
+    let bytes = hash.to_be_bytes();
+    Some(format!(
+        "52:54:00:{:02x}:{:02x}:{:02x}",
+        bytes[1], bytes[2], bytes[3]
+    ))
 }
 
 fn guest_pci_buses(addresses: &[String]) -> Result<BTreeMap<(u16, u8, u8), u8>, ConfigError> {
@@ -494,6 +515,18 @@ pub fn block_device_is_mounted(path: &str) -> Result<bool, LibvirtError> {
         .is_some_and(|devices| devices.iter().any(has_mount)))
 }
 
+pub fn undefine_domain() -> Result<(), LibvirtError> {
+    let output = Command::new("virsh")
+        .args(["--connect", LIBVIRT_URI, "undefine", "--nvram", VM_NAME])
+        .output()?;
+    if !output.status.success() {
+        return Err(LibvirtError::Command(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+    Ok(())
+}
+
 pub fn define_domain(xml: &str) -> Result<(), LibvirtError> {
     let mut child = Command::new("virsh")
         .args(["--connect", LIBVIRT_URI, "define", "/dev/stdin"])
@@ -627,12 +660,16 @@ mod tests {
         config.vm_uuid = "8a77e099-efce-417f-b960-1bbb3a0571b5".into();
         let xml = generate_domain_xml(&config, &firmware).unwrap();
         assert!(xml.contains("<uuid>8a77e099-efce-417f-b960-1bbb3a0571b5</uuid>"));
+        let mac = stable_guest_mac(&config.vm_uuid).unwrap();
+        assert!(xml.contains(&format!("<mac address='{mac}'/>")));
+        assert_eq!(mac, stable_guest_mac(&config.vm_uuid).unwrap());
         assert!(xml.contains("win&amp;11.iso"));
         assert!(xml.contains("disk&amp;data.qcow2"));
         config.network_mode = crate::model::NetworkMode::Macvtap;
         config.network_interface = "wlp0s20f3".into();
         let xml = generate_domain_xml(&config, &firmware).unwrap();
         assert!(xml.contains("<interface type='direct'><source dev='wlp0s20f3' mode='bridge'/>"));
+        assert!(xml.contains(&format!("<mac address='{mac}'/>")));
         config.usb_devices.push(UsbSelection {
             vendor_id: "x".into(),
             product_id: "1234".into(),

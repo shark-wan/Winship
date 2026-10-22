@@ -109,6 +109,28 @@ fn replace_managed_block(existing: &str, replacement: &str) -> String {
     output
 }
 
+pub fn vfio_conf_ids(existing: &str) -> Vec<String> {
+    let mut ids = Vec::new();
+    for line in existing.lines() {
+        let mut tokens = line.split_whitespace();
+        if tokens.next() != Some("options") || tokens.next() != Some("vfio-pci") {
+            continue;
+        }
+        for token in tokens {
+            let Some(value) = token.strip_prefix("ids=") else {
+                continue;
+            };
+            for id in value.split(',') {
+                let id = id.trim().to_ascii_lowercase();
+                if validate_vfio_ids(&[id.clone()]) && !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
+        }
+    }
+    ids
+}
+
 pub fn apply_vfio(ids: &[String]) -> Result<(), PrivilegedError> {
     if !validate_vfio_ids(ids) {
         return Err(PrivilegedError::InvalidIds);
@@ -547,6 +569,16 @@ mod tests {
         assert!(!second.contains("10de:22ba"));
         assert_eq!(second.matches(MANAGED_BEGIN).count(), 1);
         assert_eq!(second.matches(MANAGED_END).count(), 1);
+    }
+
+    #[test]
+    fn extracts_ids_from_managed_configuration() {
+        let config = vfio_conf_with_ids("", &["10de:2684".into(), "10de:22ba".into()]);
+        assert_eq!(
+            vfio_conf_ids(&config),
+            vec!["10de:2684".to_string(), "10de:22ba".to_string()]
+        );
+        assert!(vfio_conf_ids("# no ids here").is_empty());
     }
 
     #[test]

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>登录 · Winship</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="auth-body">
+  <main class="auth-shell">
+    <section class="auth-card">
+      <div class="brand auth-brand">
+        <span class="brand-mark" aria-hidden="true">W</span>
+        <span class="brand-copy"><strong>Winship</strong><small>Windows workstation</small></span>
+      </div>
+      <p class="eyebrow">LOCAL ACCESS TOKEN</p>
+      <h1>登录本机控制面</h1>
+      <p class="auth-copy">输入首次启动时生成并保存在 <code>/etc/winship/token</code> 的访问 token。</p>
+
+      {% if error_visible %}
+      <div class="flash flash-error" role="alert"><span class="flash-mark" aria-hidden="true">!</span><span>{{ error_message }}</span></div>
+      {% endif %}
+
+      <form method="post" action="/login" class="auth-form" data-busy>
+        <label class="field">
+          <span>访问 Token</span>
+          <input name="token" type="password" autocomplete="current-password" autofocus required placeholder="32 字节随机 token">
+        </label>
+        <button class="button button-primary button-block" type="submit">登录 Winship</button>
+      </form>
+
+      <p class="auth-note">Token 可在此命令查看：<code>sudo cat /etc/winship/token</code></p>
+      <p class="auth-version">Winship v{{ version }}</p>
+    </section>
+    <aside class="auth-aside">
+      <p class="eyebrow">ONE VM · PHYSICAL OUTPUT</p>
+      <h2>Windows 独占直通设备，<br>Debian 保持轻量。</h2>
+      <ul>
+        <li>NVIDIA 整卡 PCIe 直通</li>
+        <li>Q35 + OVMF / UEFI</li>
+        <li>VirtIO Balloon 内存回收</li>
+        <li>USB 控制器与物理磁盘直通</li>
+      </ul>
+      <small>Winship 不提供远程画面回传。请将显示器连接到直通显卡的输出口。</small>
+    </aside>
+  </main>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

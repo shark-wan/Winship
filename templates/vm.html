@@ -1,0 +1,248 @@
+{% extends "base.html" %}
+{% block title %}虚拟机 · Winship{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="eyebrow">VIRTUAL MACHINE</p>
+    <h1>Windows 虚拟机</h1>
+    <p class="page-subtitle">安装介质、计算资源、网络与直通设备</p>
+  </div>
+  <div class="page-actions">
+    {% if vm.active %}
+    <form method="post" action="/vm/action/shutdown" data-busy><button class="button button-quiet" type="submit">正常关机</button></form>
+    <form method="post" action="/vm/action/force-stop" data-busy data-confirm="强制停止相当于直接断电，可能造成 Windows 文件系统损坏。继续吗？"><button class="button button-danger" type="submit">强制停止</button></form>
+    {% else if vm.defined %}
+    <form method="post" action="/vm/action/start" data-busy><button class="button button-primary" type="submit">启动 Windows</button></form>
+    {% else %}
+    <a class="button button-quiet" href="/host">检查硬件</a>
+    {% endif %}
+  </div>
+</div>
+
+{% if vm.active %}
+<div class="inline-warning" role="alert">
+  <strong>虚拟机正在运行</strong>
+  <span>保存硬件配置前请先在 Windows 中正常关机。当前页面可查看配置，但不能更新虚拟机定义。</span>
+</div>
+{% else if vm.has_error %}
+<div class="inline-error" role="alert"><strong>libvirt 状态不可用</strong><span>{{ vm.error }}</span></div>
+{% endif %}
+
+<section class="card">
+  <div class="card-head"><div><h2>安装介质</h2><p>Windows ISO 和 virtio-win.iso 必须位于 QEMU 可读的位置。</p></div></div>
+  <div class="media-grid">
+    <div class="media-card">
+      <div class="media-title"><strong>Windows 安装 ISO</strong>
+        {% if windows_readable %}<span class="status-chip ok">QEMU 可读</span>{% else if windows_exists %}<span class="status-chip warn">权限不足</span>{% else %}<span class="status-chip off">未找到</span>{% endif %}
+      </div>
+      <p class="path-line" title="{{ config.windows_iso }}">{{ config.windows_iso }}{% if config.windows_iso.len() == 0 %}尚未选择{% endif %}</p>
+      <form class="inline-form" method="post" action="/vm/import-media" data-busy>
+        <input type="hidden" name="kind" value="windows">
+        <label class="sr-only" for="windows-source">服务器上的 Windows ISO 路径</label>
+        <input id="windows-source" name="source" type="text" placeholder="输入服务器可见的 ISO 路径" required>
+        <button class="button button-quiet button-small" type="submit">导入到媒体库</button>
+      </form>
+      <small class="help-text">如果 ISO 已位于 QEMU 可读路径，导入会直接采用；否则通过 PolicyKit 复制到媒体库。</small>
+    </div>
+    <div class="media-card">
+      <div class="media-title"><strong>VirtIO 驱动 ISO</strong>
+        {% if virtio_readable %}<span class="status-chip ok">QEMU 可读</span>{% else if virtio_exists %}<span class="status-chip warn">权限不足</span>{% else %}<span class="status-chip off">未找到</span>{% endif %}
+      </div>
+      <p class="path-line" title="{{ config.virtio_iso }}">{{ config.virtio_iso }}{% if config.virtio_iso.len() == 0 %}尚未选择{% endif %}</p>
+      <form class="inline-form" method="post" action="/vm/import-media" data-busy>
+        <input type="hidden" name="kind" value="virtio">
+        <label class="sr-only" for="virtio-source">服务器上的 VirtIO ISO 路径</label>
+        <input id="virtio-source" name="source" type="text" placeholder="输入服务器可见的 ISO 路径" required>
+        <button class="button button-quiet button-small" type="submit">导入到媒体库</button>
+      </form>
+      <small class="help-text">Windows 安装时若看不到 virtio 磁盘或网络，请从该 ISO 加载 viostor / NetKVM 驱动。</small>
+    </div>
+  </div>
+</section>
+
+<form method="post" action="/vm/config" data-busy>
+  <section class="card">
+    <div class="card-head"><div><h2>虚拟磁盘与启动</h2><p>磁盘位于 libvirt 系统镜像目录，Q35 使用 VirtIO 总线</p></div>
+      <span class="status-chip {% if disk_exists %}ok{% else %}warn{% endif %}">{% if disk_exists %}已创建 · {{ disk_size }}{% else %}未创建{% endif %}</span>
+    </div>
+    <div class="form-grid">
+      <label class="field field-wide">
+        <span>Windows ISO 路径</span>
+        <input name="windows_iso" type="text" value="{{ config.windows_iso }}" placeholder="{{ media_dir }}/win11.iso">
+      </label>
+      <label class="field field-wide">
+        <span>VirtIO 驱动 ISO 路径</span>
+        <input name="virtio_iso" type="text" value="{{ config.virtio_iso }}" placeholder="{{ media_dir }}/virtio-win.iso">
+      </label>
+      <label class="field field-wide">
+        <span>虚拟磁盘路径</span>
+        <input name="disk_path" type="text" value="{{ config.disk_path }}" placeholder="{{ default_disk_path }}">
+        <small>必须位于 {{ image_root }}；建议保留默认路径。</small>
+      </label>
+      <label class="field">
+        <span>磁盘容量（GiB）</span>
+        <input name="disk_size_gib" type="number" min="16" max="4096" value="{{ config.disk_size_gib }}" required>
+        <small>仅在创建时生效，后续修改不会自动扩容。</small>
+      </label>
+      <label class="check-field">
+        <input name="boot_from_cd" type="checkbox" {% if config.boot_from_cd %}checked{% endif %}>
+        <span><strong>优先从安装 ISO 启动</strong><small>安装完成后关闭该项并更新定义，避免每次进入安装介质。</small></span>
+      </label>
+    </div>
+    <div class="form-footer-inline">
+      <span class="help-text">创建磁盘需要 PolicyKit 授权。创建操作会先保存当前表单。</span>
+      <button class="button button-quiet" type="submit" name="action" value="create-disk" {% if disk_exists %}disabled{% endif %}>创建虚拟磁盘</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><div><h2>计算资源与内存气球</h2><p>启动内存由 currentMemory 控制，上限由 VirtIO Balloon 控制</p></div></div>
+    <div class="form-grid form-grid-three">
+      <label class="field">
+        <span>vCPU 核心</span>
+        <input name="cpu_cores" type="number" min="1" max="256" value="{{ config.cpu_cores }}" required>
+        <small>host-passthrough · 1 socket</small>
+      </label>
+      <label class="field">
+        <span>启动内存（MiB）</span>
+        <input name="startup_memory_mib" type="number" min="512" step="256" value="{{ config.startup_memory_mib }}" required>
+        <small>当前：{{ startup_memory }}</small>
+      </label>
+      <label class="field">
+        <span>最大内存（MiB）</span>
+        <input name="maximum_memory_mib" type="number" min="512" step="256" value="{{ config.maximum_memory_mib }}" required>
+        <small>当前：{{ maximum_memory }}</small>
+      </label>
+    </div>
+    <div class="inline-info compact"><strong>VirtIO Balloon</strong><span>虚拟机定义中始终启用 <code>&lt;memballoon model='virtio'&gt;</code>。Windows 内还需安装 Balloon 驱动，宿主机才能回收闲置内存。</span></div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><div><h2>PCI 直通</h2><p>NVIDIA 显卡与音频功能通常位于同一 IOMMU group，必须完整选择。</p></div>
+      <span class="count-badge">{{ config.pci_devices.len() }} 个已选</span>
+    </div>
+    {% if !iommu_ready %}
+    <div class="inline-error compact"><strong>IOMMU 未启用</strong><span>请先在“硬件与直通”页面配置 GRUB 内核参数（{{ iommu_hint }}）并重启。</span></div>
+    {% endif %}
+    {% if !firmware_ready %}
+    <div class="inline-error compact"><strong>OVMF 未就绪</strong><span>请安装 Debian 的 ovmf 包后再定义虚拟机。</span></div>
+    {% endif %}
+    <div class="table-wrap">
+      <table class="select-table">
+        <thead><tr><th class="check-cell">直通</th><th>地址 / 设备</th><th>IOMMU 分组</th><th>驱动</th></tr></thead>
+        <tbody>
+        {% for row in pci_rows %}
+        <tr class="{% if row.selected %}row-selected{% endif %}">
+          <td class="check-cell"><input type="checkbox" name="pci" value="{{ row.address }}" aria-label="直通 {{ row.address }}" {% if row.selected %}checked{% endif %}></td>
+          <td>
+            <div class="cell-title"><code>{{ row.address }}</code> {{ row.description }}
+              {% if row.is_nvidia %}<span class="tag tag-green">NVIDIA</span>{% endif %}
+              {% if row.is_usb_controller %}<span class="tag tag-blue">USB</span>{% endif %}
+            </div>
+            <small>{{ row.vendor_id }}:{{ row.device_id }} · class {{ row.class_label }}</small>
+          </td>
+          <td><div>{{ row.group_label }}</div><small>{{ row.group_members }}</small>
+            {% if row.selected && !row.group_complete %}<span class="tag tag-red">同组设备未全选</span>{% endif %}
+          </td>
+          <td><code>{{ row.driver }}</code>{% if row.vfio_ready %}<span class="tag tag-green">vfio-pci</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if selected_usb_controllers == 0 %}
+    <p class="help-text">提示：如需整卡 USB 控制器直通，请勾选分类为 USB controller 的设备。USB 控制器在虚拟机中只能由 Windows 独占。</p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-head"><div><h2>独立 USB 设备</h2><p>按总线与地址直通单个设备，不需要把整个控制器交给 Windows。</p></div></div>
+    {% if usb_rows.len() == 0 %}
+    <p class="empty-state">未发现 USB 设备。</p>
+    {% else %}
+    <div class="choice-grid">
+      {% for row in usb_rows %}
+      <label class="choice-card">
+        <input type="checkbox" name="usb" value="{{ row.index }}" {% if row.selected %}checked{% endif %}>
+        <span><strong>{{ row.name }}</strong><small>{{ row.vendor_id }}:{{ row.product_id }} · {{ row.address }}</small></span>
+      </label>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="card card-danger-zone">
+    <div class="card-head"><div><h2>物理磁盘整盘直通</h2><p>直通后该磁盘在 Debian 宿主机侧不可见，不能同时挂载。</p></div></div>
+    <div class="inline-warning compact"><strong>独占警告</strong><span>虚拟机运行时，整块磁盘及其所有分区都会从宿主机消失。请先卸载，并确认磁盘不包含宿主机数据。</span></div>
+    {% if disk_rows.len() == 0 %}
+    <p class="empty-state">未发现 USB 或可移动磁盘。</p>
+    {% else %}
+    <div class="choice-grid">
+      {% for row in disk_rows %}
+      <label class="choice-card{% if row.mounted %} is-disabled{% endif %}">
+        <input type="checkbox" name="physical_disk" value="{{ row.index }}" {% if row.selected %}checked{% endif %} {% if row.mounted %}disabled{% endif %}>
+        <span>
+          <strong>{{ row.model }}</strong>
+          <small>{{ row.path }} · {{ row.size }} · {{ row.transport }}</small>
+          {% if row.mounted %}<em class="tag tag-amber">宿主机已挂载：{{ row.mountpoint }}，请先卸载</em>{% endif %}
+        </span>
+      </label>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-head"><div><h2>网络</h2><p>NAT 为默认；桥接仅限有线；macvtap 实验性且宿主机不可达</p></div></div>
+    <div class="network-options">
+      <label class="radio-card">
+        <input type="radio" name="network_mode" value="nat" {% if network_mode == "nat" %}checked{% endif %}>
+        <span><strong>NAT</strong><small>使用 libvirt 默认网络，开箱即用。</small></span>
+      </label>
+      <label class="radio-card">
+        <input type="radio" name="network_mode" value="bridge" {% if network_mode == "bridge" %}checked{% endif %}>
+        <span><strong>桥接</strong><small>仅限有线接口；虚拟机获得局域网地址。</small></span>
+      </label>
+      <label class="radio-card">
+        <input type="radio" name="network_mode" value="macvtap" {% if network_mode == "macvtap" %}checked{% endif %}>
+        <span><strong>macvtap</strong><small>实验性；虚拟机与宿主机之间不可互访。</small></span>
+      </label>
+    </div>
+    <label class="field field-medium">
+      <span>物理接口</span>
+      <select name="network_interface" id="network-interface">
+        <option value="">使用默认 / NAT</option>
+        {% for interface in interface_options %}
+        <option value="{{ interface.value }}" data-wired="{% if interface.wired %}true{% else %}false{% endif %}" {% if config.network_interface == interface.value %}selected{% endif %}>{{ interface.label }}</option>
+        {% endfor %}
+      </select>
+      <small>桥接模式只接受有线接口，服务端会校验。</small>
+    </label>
+    <div class="network-table-note">
+      {% for row in network_rows %}
+      <span><code>{{ row.name }}</code> {{ row.state }}{% if row.wired %} · 有线{% endif %}</span>
+      {% endfor %}
+    </div>
+  </section>
+
+  <div class="form-actions">
+    <div>
+      <strong>{% if vm.defined %}更新虚拟机定义{% else %}创建虚拟机定义{% endif %}</strong>
+      <small>保存配置不会自动更新正在运行的 libvirt 定义。</small>
+    </div>
+    <div class="form-actions-buttons">
+      <button class="button button-quiet" type="submit" name="action" value="save">保存配置</button>
+      <button class="button button-primary" type="submit" name="action" value="define">保存并{% if vm.defined %}更新{% else %}定义{% endif %}</button>
+    </div>
+  </div>
+</form>
+
+{% if vm.defined %}
+<section class="card card-danger-zone">
+  <div class="card-head"><div><h2>危险区域</h2><p>删除 libvirt 定义，不会删除虚拟磁盘和 ISO。</p></div></div>
+  <form method="post" action="/vm/action/undefine" data-busy data-confirm="删除 WinShip 的 libvirt 虚拟机定义？虚拟磁盘和 ISO 会保留。">
+    <button class="button button-danger" type="submit" {% if vm.active %}disabled{% endif %}>删除虚拟机定义</button>
+  </form>
+</section>
+{% endif %}
+{% endblock %}

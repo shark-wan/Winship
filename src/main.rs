@@ -1,8 +1,5 @@
-use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QUrl};
 use std::process::ExitCode;
 use winship::privileged;
-
-mod bridge;
 
 fn main() -> ExitCode {
     let arguments = std::env::args().collect::<Vec<_>>();
@@ -13,18 +10,23 @@ fn main() -> ExitCode {
         return run_privileged(&arguments[1..]);
     }
 
-    let mut application = QGuiApplication::new();
-    let mut engine = QQmlApplicationEngine::new();
-    if let Some(engine) = engine.as_mut() {
-        engine.load(&QUrl::from("qrc:/qt/qml/org/winship/app/qml/Main.qml"));
-    }
-    if application
-        .as_mut()
-        .is_some_and(|application| application.exec() != 0)
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
     {
-        return ExitCode::FAILURE;
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("Could not start the async runtime: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match runtime.block_on(winship::web::serve()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("Winship server failed: {error}");
+            ExitCode::FAILURE
+        }
     }
-    ExitCode::SUCCESS
 }
 
 fn run_privileged(arguments: &[String]) -> ExitCode {
@@ -74,7 +76,7 @@ fn run_privileged(arguments: &[String]) -> ExitCode {
         }
         _ => {
             eprintln!(
-                "Usage: winship privileged apply-vfio <vendor:device[,vendor:device...]> | create-disk <GiB> <path> | import-media <source> <destination>"
+                "Usage: winship | winship privileged apply-vfio <vendor:device[,vendor:device...]> | create-disk <GiB> <path> | import-media <source> <destination>"
             );
             ExitCode::FAILURE
         }

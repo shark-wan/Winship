@@ -168,6 +168,11 @@ pub struct FirmwareInfo {
 pub struct HostSnapshot {
     pub debian_release: String,
     pub kernel_cmdline: String,
+    pub kernel_release: String,
+    pub hostname: String,
+    pub cpu_model: String,
+    pub memory_total_mib: u64,
+    pub memory_available_mib: u64,
     pub iommu_cmdline_enabled: bool,
     pub secure_boot_enabled: Option<bool>,
     pub iommu_groups: Vec<(u32, Vec<String>)>,
@@ -181,6 +186,16 @@ pub struct HostSnapshot {
 impl HostSnapshot {
     pub fn iommu_enabled(&self) -> bool {
         !self.iommu_groups.is_empty()
+    }
+
+    pub fn memory_used_percent(&self) -> f32 {
+        if self.memory_total_mib == 0 {
+            return 0.0;
+        }
+        let used = self
+            .memory_total_mib
+            .saturating_sub(self.memory_available_mib);
+        (used as f32 / self.memory_total_mib as f32) * 100.0
     }
 
     pub fn iommu_hint(&self) -> &'static str {
@@ -371,9 +386,6 @@ impl VmConfig {
         }
         if self.disk_path.is_empty() {
             return Err(ConfigError::MissingDiskPath);
-        }
-        if Path::new(&self.disk_path).exists() {
-            return Err(ConfigError::DiskAlreadyExists);
         }
         Ok(())
     }
