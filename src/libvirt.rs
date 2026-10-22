@@ -93,8 +93,13 @@ pub fn generate_domain_xml(
             )
         })?;
 
+    let uuid = if config.vm_uuid.is_empty() {
+        String::new()
+    } else {
+        format!("  <uuid>{}</uuid>\n", xml_escape(&config.vm_uuid))
+    };
     let mut xml = format!(
-        "<domain type='kvm'>\n  <name>{VM_NAME}</name>\n  <memory unit='MiB'>{}</memory>\n  <currentMemory unit='MiB'>{}</currentMemory>\n  <vcpu placement='static'>{}</vcpu>\n  <os>\n    <type arch='x86_64' machine='q35'>hvm</type>\n    <loader readonly='yes' type='pflash'>{}</loader>\n    <nvram template='{}'>/var/lib/libvirt/qemu/nvram/{VM_NAME}_VARS.fd</nvram>\n  </os>\n  <features>\n    <acpi/>\n    <apic/>\n    <hyperv mode='custom'>\n      <relaxed state='on'/>\n      <vapic state='on'/>\n      <spinlocks state='on' retries='8191'/>\n      <vpindex state='on'/>\n      <runtime state='on'/>\n      <synic state='on'/>\n      <stimer state='on'/>\n      <reset state='on'/>\n      <vendor_id state='on' value='Winship'/>\n    </hyperv>\n    <kvm>\n      <hidden state='on'/>\n    </kvm>\n  </features>\n  <cpu mode='host-passthrough' check='none' migratable='off'>\n    <topology sockets='1' dies='1' cores='{}' threads='1'/>\n  </cpu>\n  <clock offset='localtime'>\n    <timer name='hypervclock' present='yes'/>\n  </clock>\n  <on_poweroff>destroy</on_poweroff>\n  <on_reboot>restart</on_reboot>\n  <on_crash>destroy</on_crash>\n  <devices>\n    <emulator>/usr/bin/qemu-system-x86_64</emulator>\n    <controller type='pci' index='0' model='pcie-root'/>\n    <controller type='sata' index='0'/>\n    <controller type='usb' index='0' model='qemu-xhci'/>\n    <disk type='file' device='disk'>\n      <driver name='qemu' type='qcow2' cache='none' discard='unmap'/>\n      <source file='{}'/>\n      <target dev='vda' bus='virtio'/>\n      <boot order='2'/>\n    </disk>\n    <disk type='file' device='cdrom'>\n      <driver name='qemu' type='raw'/>\n      <source file='{}'/>\n      <target dev='sda' bus='sata'/>\n      <readonly/>\n      <boot order='1'/>\n    </disk>\n    <disk type='file' device='cdrom'>\n      <driver name='qemu' type='raw'/>\n      <source file='{}'/>\n      <target dev='sdb' bus='sata'/>\n      <readonly/>\n    </disk>\n",
+        "<domain type='kvm'>\n  <name>{VM_NAME}</name>\n{uuid}  <memory unit='MiB'>{}</memory>\n  <currentMemory unit='MiB'>{}</currentMemory>\n  <vcpu placement='static'>{}</vcpu>\n  <os>\n    <type arch='x86_64' machine='q35'>hvm</type>\n    <loader readonly='yes' type='pflash'>{}</loader>\n    <nvram template='{}'>/var/lib/libvirt/qemu/nvram/{VM_NAME}_VARS.fd</nvram>\n  </os>\n  <features>\n    <acpi/>\n    <apic/>\n    <hyperv mode='custom'>\n      <relaxed state='on'/>\n      <vapic state='on'/>\n      <spinlocks state='on' retries='8191'/>\n      <vpindex state='on'/>\n      <runtime state='on'/>\n      <synic state='on'/>\n      <stimer state='on'/>\n      <reset state='on'/>\n      <vendor_id state='on' value='Winship'/>\n    </hyperv>\n    <kvm>\n      <hidden state='on'/>\n    </kvm>\n  </features>\n  <cpu mode='host-passthrough' check='none' migratable='off'>\n    <topology sockets='1' dies='1' cores='{}' threads='1'/>\n  </cpu>\n  <clock offset='localtime'>\n    <timer name='hypervclock' present='yes'/>\n  </clock>\n  <on_poweroff>destroy</on_poweroff>\n  <on_reboot>restart</on_reboot>\n  <on_crash>destroy</on_crash>\n  <devices>\n    <emulator>/usr/bin/qemu-system-x86_64</emulator>\n    <controller type='pci' index='0' model='pcie-root'/>\n    <controller type='sata' index='0'/>\n    <controller type='usb' index='0' model='qemu-xhci'/>\n    <disk type='file' device='disk'>\n      <driver name='qemu' type='qcow2' cache='none' discard='unmap'/>\n      <source file='{}'/>\n      <target dev='vda' bus='virtio'/>\n      {disk_boot}\n    </disk>\n    <disk type='file' device='cdrom'>\n      <driver name='qemu' type='raw'/>\n      <source file='{}'/>\n      <target dev='sda' bus='sata'/>\n      <readonly/>\n      {cd_boot}\n    </disk>\n    <disk type='file' device='cdrom'>\n      <driver name='qemu' type='raw'/>\n      <source file='{}'/>\n      <target dev='sdb' bus='sata'/>\n      <readonly/>\n    </disk>\n",
         config.maximum_memory_mib,
         config.startup_memory_mib,
         config.cpu_cores,
@@ -104,12 +109,20 @@ pub fn generate_domain_xml(
         xml_escape(&config.disk_path),
         xml_escape(&config.windows_iso),
         xml_escape(&config.virtio_iso),
+        disk_boot = if config.boot_from_cd {
+            "<boot order='2'/>"
+        } else {
+            "<boot order='1'/>"
+        },
+        cd_boot = if config.boot_from_cd {
+            "<boot order='1'/>"
+        } else {
+            ""
+        },
     );
 
     xml.push_str("    <video><model type='none'/></video>\n");
-    xml.push_str(
-        "    <interface type='network'><source network='default'/><model type='virtio'/></interface>\n",
-    );
+    xml.push_str(&network_interface_xml(config)?);
 
     let guest_buses = guest_pci_buses(&config.pci_devices)?;
     for (slot_key, bus_index) in &guest_buses {
@@ -170,6 +183,34 @@ pub fn generate_domain_xml(
         "    <memballoon model='virtio'>\n      <stats period='5'/>\n    </memballoon>\n  </devices>\n</domain>\n",
     );
     Ok(xml)
+}
+
+fn network_interface_xml(config: &VmConfig) -> Result<String, ConfigError> {
+    use crate::model::NetworkMode;
+    let interface = match config.network_mode {
+        NetworkMode::Nat => {
+            "    <interface type='network'><source network='default'/><model type='virtio'/></interface>\n".to_string()
+        }
+        NetworkMode::Macvtap => {
+            if config.network_interface.trim().is_empty() {
+                return Err(ConfigError::MissingNetworkInterface);
+            }
+            format!(
+                "    <interface type='direct'><source dev='{}' mode='bridge'/><model type='virtio'/></interface>\n",
+                xml_escape(&config.network_interface)
+            )
+        }
+        NetworkMode::Bridge => {
+            if config.network_interface.trim().is_empty() {
+                return Err(ConfigError::MissingNetworkInterface);
+            }
+            format!(
+                "    <interface type='bridge'><source bridge='{}'/><model type='virtio'/></interface>\n",
+                xml_escape(&config.network_interface)
+            )
+        }
+    };
+    Ok(interface)
 }
 
 fn guest_pci_buses(addresses: &[String]) -> Result<BTreeMap<(u16, u8, u8), u8>, ConfigError> {
@@ -319,9 +360,12 @@ pub fn create_qcow2(path: &Path, size_gib: u16) -> Result<(), LibvirtError> {
             "The virtual disk parent directory does not exist".into(),
         ));
     }
-    if path.parent() != Some(Path::new("/var/lib/libvirt/images")) {
+    if !path
+        .parent()
+        .is_some_and(|parent| parent.starts_with("/var/lib/libvirt/images"))
+    {
         return Err(LibvirtError::Command(
-            "New virtual disks must be created in /var/lib/libvirt/images".into(),
+            "New virtual disks must be created under /var/lib/libvirt/images".into(),
         ));
     }
     crate::privileged::request_create_disk(path, size_gib)
@@ -360,6 +404,32 @@ pub fn validate_vfio_binding(config: &VmConfig) -> Result<(), LibvirtError> {
         }
     }
     Ok(())
+}
+
+pub fn domain_uuid() -> Result<Option<String>, LibvirtError> {
+    let output = Command::new("virsh")
+        .args(["--connect", LIBVIRT_URI, "domuuid", VM_NAME])
+        .output()?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let uuid = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .to_ascii_lowercase();
+    Ok(crate::model::is_uuid(&uuid).then_some(uuid))
+}
+
+pub fn new_uuid() -> Result<String, LibvirtError> {
+    let uuid = std::fs::read_to_string("/proc/sys/kernel/random/uuid")?
+        .trim()
+        .to_ascii_lowercase();
+    if crate::model::is_uuid(&uuid) {
+        Ok(uuid)
+    } else {
+        Err(LibvirtError::Command(
+            "Kernel returned an invalid UUID".into(),
+        ))
+    }
 }
 
 pub fn validate_vm_start(config: &VmConfig) -> Result<(), LibvirtError> {
@@ -522,6 +592,7 @@ mod tests {
         assert_eq!(root_node.attribute("type"), Some("kvm"));
         assert!(xml.contains("machine='q35'"));
         assert!(xml.contains("<memory unit='MiB'>12288</memory>"));
+        assert!(!xml.contains("<uuid>"));
         assert!(xml.contains("<currentMemory unit='MiB'>4096</currentMemory>"));
         assert!(xml.contains("<memballoon model='virtio'>"));
         assert!(xml.contains("<stats period='5'/>"));
@@ -532,6 +603,8 @@ mod tests {
         assert!(xml.contains("model='pcie-root-port'"));
         assert!(xml.contains("<video><model type='none'/></video>"));
         assert!(xml.contains("<interface type='network'><source network='default'/><model type='virtio'/></interface>"));
+        assert!(xml.contains("<boot order='1'/>"));
+        assert!(xml.contains("<boot order='2'/>"));
         assert!(xml.contains("function='0x0' multifunction='on'"));
         assert!(xml.contains("type='block'"));
         assert!(xml.contains("<address bus='3' device='7'/>"));
@@ -551,9 +624,15 @@ mod tests {
             disk_path: root.join("disk&data.qcow2").to_string_lossy().into_owned(),
             ..VmConfig::default()
         };
+        config.vm_uuid = "8a77e099-efce-417f-b960-1bbb3a0571b5".into();
         let xml = generate_domain_xml(&config, &firmware).unwrap();
+        assert!(xml.contains("<uuid>8a77e099-efce-417f-b960-1bbb3a0571b5</uuid>"));
         assert!(xml.contains("win&amp;11.iso"));
         assert!(xml.contains("disk&amp;data.qcow2"));
+        config.network_mode = crate::model::NetworkMode::Macvtap;
+        config.network_interface = "wlp0s20f3".into();
+        let xml = generate_domain_xml(&config, &firmware).unwrap();
+        assert!(xml.contains("<interface type='direct'><source dev='wlp0s20f3' mode='bridge'/>"));
         config.usb_devices.push(UsbSelection {
             vendor_id: "x".into(),
             product_id: "1234".into(),

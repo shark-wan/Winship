@@ -120,6 +120,13 @@ pub fn apply_vfio(ids: &[String]) -> Result<(), PrivilegedError> {
     )
 }
 
+fn allowed_image_parent(parent: &Path) -> bool {
+    let allowed = Path::new("/var/lib/libvirt/images");
+    fs::canonicalize(parent)
+        .ok()
+        .is_some_and(|canonical| canonical == allowed || canonical.starts_with(allowed))
+}
+
 pub fn create_disk(path: &Path, size_gib: u16) -> Result<(), PrivilegedError> {
     if !(16..=4096).contains(&size_gib) || !path.is_absolute() || path.exists() {
         return Err(PrivilegedError::Write {
@@ -130,16 +137,22 @@ pub fn create_disk(path: &Path, size_gib: u16) -> Result<(), PrivilegedError> {
             ),
         });
     }
-    let allowed_parent = Path::new("/var/lib/libvirt/images");
     let parent = path.parent().ok_or_else(|| PrivilegedError::Write {
         path: path.display().to_string(),
         source: io::Error::new(io::ErrorKind::InvalidInput, "Disk path has no parent"),
     })?;
-    let canonical_parent = fs::canonicalize(parent).map_err(|source| PrivilegedError::Write {
-        path: parent.display().to_string(),
-        source,
-    })?;
-    if canonical_parent != allowed_parent || path.file_name().is_none() {
+    if !parent.exists()
+        && parent.starts_with("/var/lib/libvirt/images")
+        && !parent
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        fs::create_dir_all(parent).map_err(|source| PrivilegedError::Write {
+            path: parent.display().to_string(),
+            source,
+        })?;
+    }
+    if !allowed_image_parent(parent) || path.file_name().is_none() {
         return Err(PrivilegedError::Write {
             path: path.display().to_string(),
             source: io::Error::new(
@@ -358,6 +371,100 @@ pub fn request_vfio_apply(ids: &[String]) -> Result<String, PrivilegedError> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+pub fn import_media(source: &Path, destination: &Path) -> Result<(), PrivilegedError> {
+    let source = fs::canonicalize(source).map_err(|error| PrivilegedError::Write {
+        path: source.display().to_string(),
+        source: error,
+    })?;
+    if !source.is_file() || !destination.is_absolute() {
+        return Err(PrivilegedError::Write {
+            path: destination.display().to_string(),
+            source: io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Media source must be a regular file and destination must be absolute",
+            ),
+        });
+    }
+    let parent = destination.parent().unwrap_or_else(|| Path::new("/"));
+    if !allowed_image_parent(parent) || destination.file_name().is_none() {
+        return Err(PrivilegedError::Write {
+            path: destination.display().to_string(),
+            source: io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Winship can import media only under /var/lib/libvirt/images",
+            ),
+        });
+    }
+    if destination.exists() {
+        return Err(PrivilegedError::Write {
+            path: destination.display().to_string(),
+            source: io::Error::new(io::ErrorKind::AlreadyExists, "Destination already exists"),
+        });
+    }
+    fs::create_dir_all(parent).map_err(|source| PrivilegedError::Write {
+        path: parent.display().to_string(),
+        source,
+    })?;
+    let temporary = parent.join(format!(
+        ".{}.winship-import",
+        destination
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+    ));
+    let copy_result = (|| {
+        let mut input = File::open(&source)?;
+        let mut output = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o644)
+            .open(&temporary)?;
+        io::copy(&mut input, &mut output)?;
+        output.sync_all()?;
+        fs::rename(&temporary, destination)?;
+        File::open(parent)?.sync_all()?;
+        Ok::<(), io::Error>(())
+    })();
+    if let Err(error) = copy_result {
+        let _ = fs::remove_file(&temporary);
+        return Err(PrivilegedError::Write {
+            path: destination.display().to_string(),
+            source: error,
+        });
+    }
+    let _ = fs::set_permissions(destination, Permissions::from_mode(0o644));
+    Ok(())
+}
+
+pub fn request_import_media(source: &Path, destination: &Path) -> Result<(), PrivilegedError> {
+    if !source.is_file() || !destination.is_absolute() || destination.exists() {
+        return Err(PrivilegedError::Write {
+            path: destination.display().to_string(),
+            source: io::Error::new(io::ErrorKind::InvalidInput, "Invalid media import request"),
+        });
+    }
+    let executable = std::env::current_exe().map_err(PrivilegedError::PolicyKit)?;
+    let output = Command::new("pkexec")
+        .arg(executable)
+        .args([
+            "privileged",
+            "import-media",
+            &source.to_string_lossy(),
+            &destination.to_string_lossy(),
+        ])
+        .output()
+        .map_err(PrivilegedError::PolicyKit)?;
+    if !output.status.success() {
+        let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(PrivilegedError::Command(if error.is_empty() {
+            "The privileged media import was cancelled or failed.".into()
+        } else {
+            error
+        }));
+    }
+    Ok(())
+}
+
 pub fn request_create_disk(path: &Path, size_gib: u16) -> Result<(), PrivilegedError> {
     if !(16..=4096).contains(&size_gib)
         || !path.is_absolute()
@@ -479,5 +586,14 @@ mod tests {
     fn rejects_disk_creation_outside_libvirt_image_directory() {
         let error = create_disk(Path::new("/tmp/winship.qcow2"), 80).unwrap_err();
         assert!(error.to_string().contains("/var/lib/libvirt/images"));
+    }
+
+    #[test]
+    fn imports_media_only_under_libvirt_images() {
+        let source = std::env::temp_dir().join(format!("winship-media-{}.iso", std::process::id()));
+        fs::write(&source, b"iso").unwrap();
+        let error = import_media(&source, Path::new("/tmp/winship.iso")).unwrap_err();
+        assert!(error.to_string().contains("/var/lib/libvirt/images"));
+        let _ = fs::remove_file(source);
     }
 }

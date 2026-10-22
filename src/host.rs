@@ -1,4 +1,6 @@
-use crate::model::{BlockDevice, FirmwareInfo, HostSnapshot, PciDevice, UsbDevice};
+use crate::model::{
+    BlockDevice, FirmwareInfo, HostSnapshot, NetworkInterface, PciDevice, UsbDevice,
+};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs;
@@ -26,6 +28,7 @@ pub fn inspect_host() -> HostSnapshot {
         pci_devices: discover_pci_devices(Path::new("/sys/bus/pci/devices")),
         usb_devices: discover_usb_devices(Path::new("/sys/bus/usb/devices")),
         block_devices: discover_block_devices(),
+        network_interfaces: discover_network_interfaces(Path::new("/sys/class/net")),
         firmware: discover_firmware(Path::new("/usr/share/OVMF")),
         debian_release,
     }
@@ -223,15 +226,80 @@ pub fn discover_usb_devices(root: &Path) -> Vec<UsbDevice> {
     devices
 }
 
+pub fn discover_network_interfaces(root: &Path) -> Vec<NetworkInterface> {
+    let Ok(entries) = fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut interfaces = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name == "lo" {
+            continue;
+        }
+        let path = entry.path();
+        let state = fs::read_to_string(path.join("operstate"))
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let kind = if path.join("wireless").exists()
+            || path.join("phy80211").exists()
+            || fs::symlink_metadata(path.join("phy80211")).is_ok()
+        {
+            "wireless"
+        } else if fs::symlink_metadata(path.join("device")).is_ok() {
+            "ethernet"
+        } else {
+            "other"
+        };
+        let addresses: Vec<String> = Command::new("ip")
+            .args(["-brief", "addr", "show", "dev", &name])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| {
+                String::from_utf8_lossy(&output.stdout)
+                    .split_whitespace()
+                    .skip(2)
+                    .filter(|value| value.contains('/') || value.contains(':'))
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if state == "down" && addresses.is_empty() {
+            continue;
+        }
+        interfaces.push(NetworkInterface {
+            name,
+            kind: kind.into(),
+            state,
+            addresses,
+        });
+    }
+    interfaces.sort_by(|left, right| {
+        (left.kind != "wireless", &left.name).cmp(&(right.kind != "wireless", &right.name))
+    });
+    interfaces
+}
+
+pub fn active_default_interface() -> Option<NetworkInterface> {
+    discover_network_interfaces(Path::new("/sys/class/net"))
+        .into_iter()
+        .find(|interface| interface.state == "up" && interface.kind == "wireless")
+        .or_else(|| {
+            discover_network_interfaces(Path::new("/sys/class/net"))
+                .into_iter()
+                .find(|interface| interface.state == "up")
+        })
+}
+
 pub fn discover_block_devices() -> Vec<BlockDevice> {
     let Ok(output) = Command::new("lsblk")
         .args([
             "--json",
             "--bytes",
-            "--nodeps",
             "--paths",
             "--output",
-            "NAME,TYPE,SIZE,MODEL,TRAN,RM",
+            "NAME,TYPE,SIZE,MODEL,TRAN,RM,MOUNTPOINTS",
         ])
         .output()
     else {
@@ -267,6 +335,22 @@ pub fn discover_block_devices() -> Vec<BlockDevice> {
             if get("type") != "disk" || path.is_empty() || (transport != "usb" && !removable) {
                 return None;
             }
+            fn collect_mountpoints(node: &Value, mounts: &mut Vec<String>) {
+                if let Some(values) = node.get("mountpoints").and_then(Value::as_array) {
+                    for value in values.iter().filter_map(Value::as_str) {
+                        if !value.is_empty() && !mounts.iter().any(|mount| mount == value) {
+                            mounts.push(value.to_string());
+                        }
+                    }
+                }
+                if let Some(children) = node.get("children").and_then(Value::as_array) {
+                    for child in children {
+                        collect_mountpoints(child, mounts);
+                    }
+                }
+            }
+            let mut mountpoints = Vec::new();
+            collect_mountpoints(row, &mut mountpoints);
             Some(BlockDevice {
                 path: stable_disk_path(path, transport),
                 model: get("model").trim().to_string(),
@@ -277,6 +361,8 @@ pub fn discover_block_devices() -> Vec<BlockDevice> {
                     transport.into()
                 },
                 removable,
+                mounted: !mountpoints.is_empty(),
+                mountpoints,
             })
         })
         .collect()

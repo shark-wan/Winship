@@ -49,6 +49,18 @@ fn run_privileged(arguments: &[String]) -> ExitCode {
                 }
             }
         }
+        Some("import-media") if arguments.len() == 4 => {
+            match privileged::import_media(
+                std::path::Path::new(&arguments[2]),
+                std::path::Path::new(&arguments[3]),
+            ) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("{error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Some("create-disk") if arguments.len() == 4 => {
             let Ok(size_gib) = arguments[2].parse::<u16>() else {
                 eprintln!("Disk size must be between 16 and 4096 GiB");
@@ -64,7 +76,7 @@ fn run_privileged(arguments: &[String]) -> ExitCode {
         }
         _ => {
             eprintln!(
-                "Usage: winship privileged apply-vfio <vendor:device[,vendor:device...]> | create-disk <GiB> <path>"
+                "Usage: winship privileged apply-vfio <vendor:device[,vendor:device...]> | create-disk <GiB> <path> | import-media <source> <destination>"
             );
             ExitCode::FAILURE
         }

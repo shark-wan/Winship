@@ -8,6 +8,7 @@ pub const LIBVIRT_URI: &str = "qemu:///system";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct VmConfig {
+    pub vm_uuid: String,
     pub windows_iso: String,
     pub virtio_iso: String,
     pub disk_path: String,
@@ -18,11 +19,15 @@ pub struct VmConfig {
     pub pci_devices: Vec<String>,
     pub usb_devices: Vec<UsbSelection>,
     pub physical_disks: Vec<String>,
+    pub network_mode: NetworkMode,
+    pub network_interface: String,
+    pub boot_from_cd: bool,
 }
 
 impl Default for VmConfig {
     fn default() -> Self {
         Self {
+            vm_uuid: String::new(),
             windows_iso: String::new(),
             virtio_iso: String::new(),
             disk_path: String::new(),
@@ -33,8 +38,38 @@ impl Default for VmConfig {
             pci_devices: Vec::new(),
             usb_devices: Vec::new(),
             physical_disks: Vec::new(),
+            network_mode: NetworkMode::Nat,
+            network_interface: String::new(),
+            boot_from_cd: true,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum NetworkMode {
+    #[default]
+    Nat,
+    Macvtap,
+    Bridge,
+}
+
+impl NetworkMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Nat => "NAT",
+            Self::Macvtap => "macvtap",
+            Self::Bridge => "bridge",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkInterface {
+    pub name: String,
+    pub kind: String,
+    pub state: String,
+    pub addresses: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -119,6 +154,8 @@ pub struct BlockDevice {
     pub size: String,
     pub transport: String,
     pub removable: bool,
+    pub mounted: bool,
+    pub mountpoints: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -137,6 +174,7 @@ pub struct HostSnapshot {
     pub pci_devices: Vec<PciDevice>,
     pub usb_devices: Vec<UsbDevice>,
     pub block_devices: Vec<BlockDevice>,
+    pub network_interfaces: Vec<NetworkInterface>,
     pub firmware: FirmwareInfo,
 }
 
@@ -226,6 +264,12 @@ impl HostSnapshot {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ConfigError {
+    #[error("VM UUID must be a canonical lowercase UUID")]
+    InvalidUuid,
+    #[error("A macOS/network interface name is required for macvtap or bridge networking")]
+    MissingNetworkInterface,
+    #[error("Network interface name contains invalid characters")]
+    InvalidNetworkInterface,
     #[error("Startup memory must be greater than zero")]
     StartupMemoryZero,
     #[error("Maximum memory must be at least startup memory")]
@@ -262,6 +306,9 @@ pub enum ConfigError {
 
 impl VmConfig {
     pub fn validate(&self) -> Result<(), ConfigError> {
+        if !self.vm_uuid.is_empty() && !is_uuid(&self.vm_uuid) {
+            return Err(ConfigError::InvalidUuid);
+        }
         if self.startup_memory_mib == 0 {
             return Err(ConfigError::StartupMemoryZero);
         }
@@ -299,6 +346,16 @@ impl VmConfig {
         for path in &self.physical_disks {
             if !Path::new(path).is_absolute() {
                 return Err(ConfigError::RelativePath(path.clone()));
+            }
+        }
+        if self.network_mode != NetworkMode::Nat {
+            if self.network_interface.trim().is_empty() {
+                return Err(ConfigError::MissingNetworkInterface);
+            }
+            if !self.network_interface.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b':')
+            }) {
+                return Err(ConfigError::InvalidNetworkInterface);
             }
         }
         Ok(())
@@ -340,6 +397,15 @@ pub fn is_hex_id(value: &str) -> bool {
     value.len() == 4 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
+pub fn is_uuid(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 36
+        && bytes.iter().enumerate().all(|(index, byte)| match index {
+            8 | 13 | 18 | 23 => *byte == b'-',
+            _ => byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase(),
+        })
+}
+
 pub fn xml_escape(value: &str) -> String {
     value
         .replace('&', "&amp;")
@@ -378,6 +444,21 @@ mod tests {
             config.validate(),
             Err(ConfigError::InvalidPciAddress(_))
         ));
+    }
+
+    #[test]
+    fn validates_canonical_uuids() {
+        assert!(is_uuid("8a77e099-efce-417f-b960-1bbb3a0571b5"));
+        assert!(!is_uuid("8A77E099-EFCE-417F-B960-1BBB3A0571B5"));
+        assert!(!is_uuid("8a77e099efce417fb9601bbb3a0571b5"));
+        assert!(!is_uuid("not-a-uuid"));
+        let mut config = VmConfig {
+            vm_uuid: "NOT-A-UUID".into(),
+            ..VmConfig::default()
+        };
+        assert_eq!(config.validate(), Err(ConfigError::InvalidUuid));
+        config.vm_uuid.clear();
+        assert!(config.validate().is_ok());
     }
 
     #[test]

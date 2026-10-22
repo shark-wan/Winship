@@ -12,6 +12,7 @@ fn main() {
     config.cpu_cores = 8;
     config.startup_memory_mib = 4096;
     config.maximum_memory_mib = 12288;
+    config.vm_uuid = std::env::var("WINSHIP_UUID").unwrap_or_default();
     config.pci_devices = vec![
         "0000:01:00.0".into(),
         "0000:01:00.1".into(),
