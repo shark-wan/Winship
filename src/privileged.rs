@@ -56,7 +56,9 @@ pub fn vfio_conf_with_ids(existing: &str, ids: &[String]) -> String {
         "{MANAGED_BEGIN}\noptions vfio-pci ids={id_list}\nsoftdep nouveau pre: vfio-pci\nsoftdep xhci_pci pre: vfio-pci"
     );
     if ids.iter().any(|id| id.starts_with("10de:")) {
-        block.push_str("\nblacklist nouveau");
+        block.push_str(
+            "\nblacklist nouveau\nblacklist nvidia\nblacklist nvidia_drm\nblacklist nvidia_modeset",
+        );
     }
     block.push_str(&format!("\n{MANAGED_END}"));
     replace_managed_block(existing, &block)
@@ -566,6 +568,9 @@ mod tests {
         assert!(second.contains("softdep nouveau pre: vfio-pci"));
         assert!(second.contains("softdep xhci_pci pre: vfio-pci"));
         assert!(second.contains("blacklist nouveau"));
+        assert!(second.contains("blacklist nvidia"));
+        assert!(second.contains("blacklist nvidia_drm"));
+        assert!(second.contains("blacklist nvidia_modeset"));
         assert!(!second.contains("10de:22ba"));
         assert_eq!(second.matches(MANAGED_BEGIN).count(), 1);
         assert_eq!(second.matches(MANAGED_END).count(), 1);
