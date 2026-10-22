@@ -1,5 +1,8 @@
+use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QUrl};
 use std::process::ExitCode;
-use winship::{app::WinshipApp, privileged};
+use winship::privileged;
+
+mod bridge;
 
 fn main() -> ExitCode {
     let arguments = std::env::args().collect::<Vec<_>>();
@@ -10,23 +13,18 @@ fn main() -> ExitCode {
         return run_privileged(&arguments[1..]);
     }
 
-    let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([1280.0, 860.0])
-            .with_min_inner_size([960.0, 680.0]),
-        ..Default::default()
-    };
-    match eframe::run_native(
-        "Winship",
-        options,
-        Box::new(|context| Ok(Box::new(WinshipApp::new(context)))),
-    ) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("Could not start Winship: {error}");
-            ExitCode::FAILURE
-        }
+    let mut application = QGuiApplication::new();
+    let mut engine = QQmlApplicationEngine::new();
+    if let Some(engine) = engine.as_mut() {
+        engine.load(&QUrl::from("qrc:/qt/qml/org/winship/app/qml/Main.qml"));
     }
+    if application
+        .as_mut()
+        .is_some_and(|application| application.exec() != 0)
+    {
+        return ExitCode::FAILURE;
+    }
+    ExitCode::SUCCESS
 }
 
 fn run_privileged(arguments: &[String]) -> ExitCode {

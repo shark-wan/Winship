@@ -5,3 +5,7 @@ AGENTS.md
 *.swp
 *.tmp
 
+
+# Local editor/QML tooling state
+*.kate-swp
+.qmlls.ini
